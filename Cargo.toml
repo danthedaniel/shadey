@@ -1,0 +1,16 @@
+[package]
+name = "shadey"
+version = "0.1.0"
+authors = ["teaearlgraycold <supacoofoo@gmail.com>"]
+
+[dependencies]
+glium = "0.17"
+image = "0.15"
+docopt = "0.8"
+serde = "1.0"
+serde_derive = "1.0"
+
+[[bin]]
+name = "shadey"
+test = false
+doc = false
