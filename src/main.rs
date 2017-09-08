@@ -4,6 +4,7 @@ extern crate docopt;
 #[macro_use]
 extern crate glium;
 extern crate image;
+extern crate inotify;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -12,6 +13,11 @@ use std::path::Path;
 use docopt::Docopt;
 use glium::{glutin, Surface, Display};
 use glium::texture::Texture2d;
+use inotify::{
+    event_mask,
+    watch_mask,
+    Inotify,
+};
 
 const USAGE: &'static str = "
 shadey
@@ -31,6 +37,12 @@ struct Args {
     arg_shader: String
 }
 
+#[derive(PartialEq)]
+enum ProgramStatus {
+    Done,
+    Reload
+}
+
 #[derive(Copy, Clone)]
 struct Vertex {
     position: [f32; 2],
@@ -43,10 +55,17 @@ fn main() {
         and_then(|d| d.deserialize()).
         unwrap_or_else(|e| e.exit());
 
-    match run_shader(args) {
-        Ok(_) => std::process::exit(0),
-        Err(e) => {
-            eprintln!("Error: {}", e);
+    loop {
+        match run_shader(&args) {
+            Ok(status) => {
+                if status == ProgramStatus::Done {
+                    return;
+                }
+            },
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return;
+            }
         }
     }
 }
@@ -88,7 +107,15 @@ fn read_shader(shader_path: &String) -> Result<String, &'static str> {
     Ok(contents)
 }
 
-fn run_shader(args: Args) -> Result<(), &'static str> {
+fn run_shader(args: &Args) -> Result<ProgramStatus, &'static str> {
+    // Set up inotify
+    let mut file_updates = Inotify::init().map_err(|_| "Failed to initialize an inotify.")?;
+    file_updates.add_watch(&args.arg_image, watch_mask::MODIFY).
+        map_err(|_| "Could not add watch to image file.")?;
+    file_updates.add_watch(&args.arg_shader, watch_mask::MODIFY).
+        map_err(|_| "Could not add watch to shader file.")?;
+
+    // Set up window
     let mut events_loop = glutin::EventsLoop::new();
     let display = init_display(&events_loop)?;
     let texture = texture_from_path(&display, &args.arg_image)?;
@@ -97,6 +124,7 @@ fn run_shader(args: Args) -> Result<(), &'static str> {
     let vertex_buffer = glium::VertexBuffer::new(&display, &shape).unwrap();
     let indices = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
 
+    // Compile shaders
     let vertex_shader_src = include_str!("main.vert");
     let fragment_shader_src = read_shader(&args.arg_shader)?;
     let program = glium::Program::from_source(&display, vertex_shader_src, &fragment_shader_src, None).unwrap();
@@ -106,7 +134,6 @@ fn run_shader(args: Args) -> Result<(), &'static str> {
         let uniforms = uniform! {tex: &texture};
         let mut target = display.draw();
         target.clear_color(1.0, 1.0, 1.0, 1.0);
-
         target.draw(&vertex_buffer, &indices, &program, &uniforms, &Default::default()).
             map_err(|_| "Could not draw shader.")?;
         target.finish().unwrap();
@@ -114,13 +141,26 @@ fn run_shader(args: Args) -> Result<(), &'static str> {
         events_loop.poll_events(|event| {
             match event {
                 glutin::Event::WindowEvent { event, .. } => match event {
-                    glutin::WindowEvent::Closed => closed = true,
+                    glutin::WindowEvent::Closed => {
+                        closed = true;
+                    },
                     _ => ()
                 },
                 _ => (),
             }
         });
+
+        // Check for file changes
+        let mut event_buffer = [0; 1024];
+        let events = file_updates.read_events(&mut event_buffer).
+            map_err(|_| "Could not read inotify events.")?;
+
+        for event in events {
+            if event.mask.contains(event_mask::MODIFY) {
+                return Ok(ProgramStatus::Reload);
+            }
+        }
     }
 
-    Ok(())
+    Ok(ProgramStatus::Done)
 }
