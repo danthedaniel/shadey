@@ -71,7 +71,7 @@ fn main() {
 }
 
 fn init_display(events_loop: &glutin::EventsLoop) -> Result<Display, &'static str> {
-    let window = glutin::WindowBuilder::new().with_title("Shader Toy");
+    let window = glutin::WindowBuilder::new().with_title("Shadey");
     let context = glutin::ContextBuilder::new();
 
     Display::new(window, context, &events_loop).
